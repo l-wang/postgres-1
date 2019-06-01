@@ -68,6 +68,7 @@
 #include "storage/spin.h"
 #include "storage/sync.h"
 #include "utils/builtins.h"
+#include "utils/faultinjector.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
@@ -8515,6 +8516,11 @@ CreateCheckPoint(int flags)
 		shutdown = true;
 	else
 		shutdown = false;
+
+#ifdef FAULT_INJECTOR
+	if (SIMPLE_FAULT_INJECTOR(Checkpoint) == FaultInjectorTypeSkip)
+		return;
+#endif
 
 	/* sanity check */
 	if (RecoveryInProgress() && (flags & CHECKPOINT_END_OF_RECOVERY) == 0)

@@ -71,6 +71,7 @@
 #include "tcop/pquery.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
+#include "utils/faultinjector.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
@@ -974,6 +975,60 @@ pg_plan_queries(List *querytrees, int cursorOptions, ParamListInfo boundParams)
 	return stmt_list;
 }
 
+#ifdef FAULT_INJECTOR
+static void
+exec_fault_injector_command(const char *query_string)
+{
+	char name[NAMEDATALEN];
+	char type[NAMEDATALEN];
+	char ddl[NAMEDATALEN];
+	char db[NAMEDATALEN];
+	char table[NAMEDATALEN];
+	int start;
+	int end;
+	int extra;
+	char *result;
+	int len;
+
+	if (sscanf(query_string, "faultname=%s type=%s ddl=%s db=%s table=%s "
+			   "start=%d end=%d extra=%d",
+			   name, type, ddl, db, table, &start, &end, &extra) != 8)
+		elog(ERROR, "invalid fault message: %s", query_string);
+	/* The value '#' means not specified. */
+	if (ddl[0] == '#')
+		ddl[0] = '\0';
+	if (db[0] == '#')
+		db[0] = '\0';
+	if (table[0] == '#')
+		table[0] = '\0';
+
+	result = InjectFault(name, type, ddl, db, table, start, end, extra);
+	len = strlen(result);
+
+	StringInfoData buf;
+	pq_beginmessage(&buf, 'T');
+	pq_sendint(&buf, Natts_fault_message_response, 2);
+
+	pq_sendstring(&buf, "status");
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, Anum_fault_message_response_status, 2);		/* attnum */
+	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
+	pq_sendint(&buf, -1, 2);	/* typlen */
+	pq_sendint(&buf, -1, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
+	pq_endmessage(&buf);
+
+	/* Send a DataRow message */
+	pq_beginmessage(&buf, 'D');
+	pq_sendint(&buf, Natts_fault_message_response, 2);		/* # of columns */
+
+	pq_sendint(&buf, len, 4);
+	pq_sendbytes(&buf, result, len);
+	pq_endmessage(&buf);
+	EndCommand("fault", DestRemote);
+	pq_flush();
+}
+#endif
 
 /*
  * exec_simple_query
@@ -4245,6 +4300,10 @@ PostgresMain(int argc, char *argv[],
 						if (!exec_replication_command(query_string))
 							exec_simple_query(query_string);
 					}
+#ifdef FAULT_INJECTOR
+					if (am_faultinjector)
+						exec_fault_injector_command(query_string);
+#endif
 					else
 						exec_simple_query(query_string);
 
