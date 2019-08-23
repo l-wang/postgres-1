@@ -25,6 +25,7 @@
 #define WAL_ZEDSTORE_BTREE_REPLACE_LEAF_ITEM	0x50
 #define WAL_ZEDSTORE_BTREE_REWRITE_PAGES	0x60
 #define WAL_ZEDSTORE_TOAST_NEWPAGE			0x70
+#define WAL_ZEDSTORE_DELETE_PAGE            0x80
 
 /* in zedstore_wal.c */
 extern void zedstore_redo(XLogReaderState *record);
@@ -141,6 +142,16 @@ typedef struct wal_zedstore_toast_newpage
 } wal_zedstore_toast_newpage;
 
 #define SizeOfZSWalToastNewPage (offsetof(wal_zedstore_toast_newpage, offset) + sizeof(int32))
+
+/*
+ * WAL record for deleting zedstore pages.
+ */
+typedef struct wal_zspage_delete_page
+{
+	BlockNumber fpm_old_head;
+} wal_zspage_delete_page;
+
+#define SizeOfZSWalZSPageDeletePage (offsetof(wal_zspage_delete_page, fpm_old_head) + sizeof(BlockNumber))
 
 extern void zsbt_leaf_items_redo(XLogReaderState *record, bool replace);
 extern void zsmeta_new_btree_root_redo(XLogReaderState *record);

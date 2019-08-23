@@ -887,6 +887,7 @@ extern Buffer zsbt_find_and_lock_leaf_containing_tid(Relation rel, AttrNumber at
 													 Buffer buf, zstid nexttid, int lockmode);
 extern bool zsbt_page_is_expected(Relation rel, AttrNumber attno, zstid key, int level, Buffer buf);
 extern void zsbt_wal_log_leaf_items(Relation rel, AttrNumber attno, Buffer buf, OffsetNumber off, bool replace, List *items, struct zs_pending_undo_op *undo_op);
+extern void zspage_wal_log_delete_page(Relation rel, Buffer buf, BlockNumber zs_fpm_old_head, Buffer metabuf);
 extern void zsbt_wal_log_rewrite_pages(Relation rel, AttrNumber attno, List *buffers, struct zs_pending_undo_op *undo_op);
 
 /*

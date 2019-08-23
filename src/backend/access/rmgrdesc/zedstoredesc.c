@@ -66,6 +66,12 @@ zedstore_desc(StringInfo buf, XLogReaderState *record)
 						 ZSTidGetBlockNumber(walrec->tid), ZSTidGetOffsetNumber(walrec->tid),
 						 walrec->attno, walrec->offset, walrec->total_size);
 	}
+	else if (info == WAL_ZEDSTORE_DELETE_PAGE)
+	{
+		wal_zspage_delete_page *walrec = (wal_zspage_delete_page *) rec;
+
+		appendStringInfo(buf, "old free space map head block number %u",walrec->fpm_old_head);
+	}
 }
 
 const char *
@@ -98,6 +104,9 @@ zedstore_identify(uint8 info)
 			break;
 		case WAL_ZEDSTORE_TOAST_NEWPAGE:
 			id = "ZSTOAST_NEWPAGE";
+			break;
+		case WAL_ZEDSTORE_DELETE_PAGE:
+			id = "ZSPAGE_DELETE_PAGE";
 			break;
 	}
 	return id;

@@ -45,7 +45,9 @@
 
 #include <math.h>
 
+#include "access/xlogutils.h"
 #include "access/zedstore_internal.h"
+#include "access/zedstore_wal.h"
 #include "miscadmin.h"
 #include "storage/bufpage.h"
 #include "storage/lmgr.h"
@@ -223,6 +225,7 @@ zspage_delete_page(Relation rel, Buffer buf)
 	Page		metapage;
 	ZSMetaPageOpaque *metaopaque;
 	Page		page;
+	BlockNumber fmp_old_head;
 
 	metabuf = ReadBuffer(rel, ZS_META_BLK);
 	LockBuffer(metabuf, BUFFER_LOCK_EXCLUSIVE);
@@ -231,12 +234,76 @@ zspage_delete_page(Relation rel, Buffer buf)
 
 	page = BufferGetPage(buf);
 	zspage_mark_page_deleted(page, metaopaque->zs_fpm_head);
+	fmp_old_head = metaopaque->zs_fpm_head;
 	metaopaque->zs_fpm_head = blk;
 
 	MarkBufferDirty(metabuf);
 	MarkBufferDirty(buf);
 
 	/* FIXME: WAL-logging */
+	if (RelationNeedsWAL(rel))
+		zspage_wal_log_delete_page(rel, buf, fmp_old_head, metabuf);
 	
 	UnlockReleaseBuffer(metabuf);
+}
+
+void
+zspage_wal_log_delete_page(Relation rel, Buffer buf, BlockNumber zs_fpm_old_head, Buffer metabuf)
+{
+	XLogRecPtr	recptr;
+	wal_zspage_delete_page  xlrec;
+
+	xlrec.fpm_old_head = zs_fpm_old_head;
+
+	XLogBeginInsert();
+	XLogRegisterBuffer(0, buf, REGBUF_WILL_INIT);
+	XLogRegisterBuffer(1, metabuf, REGBUF_STANDARD);
+	XLogRegisterData((char *) &xlrec, SizeOfZSWalZSPageDeletePage);
+	//XLogRegisterBufData(0, NULL, 0);
+
+	recptr = XLogInsert(RM_ZEDSTORE_ID, WAL_ZEDSTORE_DELETE_PAGE);
+
+	PageSetLSN(BufferGetPage(buf), recptr);
+	PageSetLSN(BufferGetPage(metabuf), recptr);
+}
+
+void
+zspage_delete_page_redo(XLogReaderState *record)
+{
+#if 0
+	XLogRecPtr	lsn = record->EndRecPtr;
+	wal_zspage_delete_page *xlrec =
+			(wal_zspage_delete_page *) XLogRecGetData(record);
+	Buffer		buffer;
+
+
+
+	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)
+	{
+		BlockNumber blk = BufferGetBlockNumber(buffer);
+		Buffer		metabuf;
+		Page		metapage;
+		ZSMetaPageOpaque *metaopaque;
+		Page		page;
+
+		metabuf = ReadBuffer(rel, ZS_META_BLK);
+		LockBuffer(metabuf, BUFFER_LOCK_EXCLUSIVE);
+		metapage = BufferGetPage(metabuf);
+		metaopaque = (ZSMetaPageOpaque *) PageGetSpecialPointer(metapage);
+
+		page = BufferGetPage(buf);
+		zspage_mark_page_deleted(page, metaopaque->zs_fpm_head);
+		metaopaque->zs_fpm_head = blk;
+
+		MarkBufferDirty(metabuf);
+		MarkBufferDirty(buf);
+
+		/* FIXME: WAL-logging */
+		if (RelationNeedsWAL(rel))
+			zedstore_wal_log_delete_page(rel, buf);
+
+		UnlockReleaseBuffer(metabuf);
+	}
+
+#endif
 }
