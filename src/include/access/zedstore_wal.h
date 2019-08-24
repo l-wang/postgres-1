@@ -157,5 +157,6 @@ extern void zsbt_leaf_items_redo(XLogReaderState *record, bool replace);
 extern void zsmeta_new_btree_root_redo(XLogReaderState *record);
 extern void zsbt_rewrite_pages_redo(XLogReaderState *record);
 extern void zstoast_newpage_redo(XLogReaderState *record);
+extern void zspage_delete_page_redo(XLogReaderState *record);
 
 #endif							/* ZEDSTORE_WAL_H */

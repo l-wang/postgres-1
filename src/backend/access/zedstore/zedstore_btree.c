@@ -908,6 +908,8 @@ zsbt_wal_log_leaf_items(Relation rel, AttrNumber attno, Buffer buf,
 		XLogRegisterBufData(0, item, itemsz);
 	}
 
+	elog(WARNING, "zsbt_wal_log_leaf_items -- undo_op: %s, xlrec.attno: %d, "
+			   "xlrec.nitems: %d, xlrec.off: %x", undo_op ? "true" : "false", attno, list_length(items), xlrec.off);
 	if (undo_op)
 		XLogRegisterUndoOp(1, undo_op);
 
@@ -928,6 +930,7 @@ zsbt_leaf_items_redo(XLogReaderState *record, bool replace)
 	Buffer		buffer;
 	Buffer		undobuf;
 
+	pg_usleep(60000000);
 	if (XLogRecHasBlockRef(record, 1))
 		undobuf = XLogRedoUndoOp(record, 1);
 	else

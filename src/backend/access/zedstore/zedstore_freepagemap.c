@@ -270,40 +270,40 @@ zspage_wal_log_delete_page(Relation rel, Buffer buf, BlockNumber zs_fpm_old_head
 void
 zspage_delete_page_redo(XLogReaderState *record)
 {
-#if 0
 	XLogRecPtr	lsn = record->EndRecPtr;
 	wal_zspage_delete_page *xlrec =
-			(wal_zspage_delete_page *) XLogRecGetData(record);
-	Buffer		buffer;
+		(wal_zspage_delete_page *) XLogRecGetData(record);
+	Buffer		buf;
+	Buffer      metabuf;
+	Page        page;
 
-
-
-	if (XLogReadBufferForRedo(record, 0, &buffer) == BLK_NEEDS_REDO)
+	if (XLogReadBufferForRedo(record, 0, &buf) == BLK_NEEDS_REDO)
 	{
-		BlockNumber blk = BufferGetBlockNumber(buffer);
-		Buffer		metabuf;
-		Page		metapage;
-		ZSMetaPageOpaque *metaopaque;
-		Page		page;
-
-		metabuf = ReadBuffer(rel, ZS_META_BLK);
-		LockBuffer(metabuf, BUFFER_LOCK_EXCLUSIVE);
-		metapage = BufferGetPage(metabuf);
-		metaopaque = (ZSMetaPageOpaque *) PageGetSpecialPointer(metapage);
-
 		page = BufferGetPage(buf);
-		zspage_mark_page_deleted(page, metaopaque->zs_fpm_head);
-		metaopaque->zs_fpm_head = blk;
 
-		MarkBufferDirty(metabuf);
+		zspage_mark_page_deleted(page, xlrec->fpm_old_head);
+
+		PageSetLSN(page, lsn);
 		MarkBufferDirty(buf);
-
-		/* FIXME: WAL-logging */
-		if (RelationNeedsWAL(rel))
-			zedstore_wal_log_delete_page(rel, buf);
-
-		UnlockReleaseBuffer(metabuf);
 	}
 
-#endif
+	if (XLogReadBufferForRedo(record, 1, &metabuf) == BLK_NEEDS_REDO)
+	{
+		BlockNumber blk = BufferGetBlockNumber(buf);
+		Page		metapage;
+		ZSMetaPageOpaque *metaopaque;
+
+		metapage = BufferGetPage(metabuf);
+		metaopaque = (ZSMetaPageOpaque *) PageGetSpecialPointer(metapage);
+		metaopaque->zs_fpm_head = blk;
+
+		PageSetLSN(metapage, lsn);
+		MarkBufferDirty(metabuf);
+	}
+
+	if (BufferIsValid(buf))
+		UnlockReleaseBuffer(buf);
+	if (BufferIsValid(metabuf))
+		UnlockReleaseBuffer(metabuf);
+
 }

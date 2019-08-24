@@ -633,6 +633,7 @@ XLogRedoUndoOp(XLogReaderState *record, uint8 block_id)
 		op.reservation.undobuf = buffer;
 		op.reservation.undorecptr = xlrec.undoptr;
 		op.reservation.length = xlrec.length;
+		op.is_update = xlrec.is_update;
 		op.reservation.ptr = ((char *) BufferGetPage(buffer)) + xlrec.undoptr.offset;
 
 		START_CRIT_SECTION();
