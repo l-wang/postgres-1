@@ -112,7 +112,7 @@ retry:
 		tupbuffer->attbuffers = palloc(natts * sizeof(attbuffer));
 		tupbuffer->natts = natts;
 
-		elog(LOG, "get_tuplebuffer got tupbuffer: %p", tupbuffer);
+		elog(LOG, "get_tuplebuffer got tupbuffer: %p, relid: %u", tupbuffer, tupbuffer->relid);
 		elog(LOG, "get_tuplebuffer allocated attbuffers: %p", tupbuffer->attbuffers);
 
 		for (attno = 1; attno <= natts; attno++)
@@ -441,6 +441,7 @@ zsbt_tuplebuffer_flush(Relation rel)
 
 	elog(LOG, "zsbt_tuplebuffer_flush tupbuffer address: %p", tupbuffer);
 	elog(LOG, "zsbt_tuplebuffer_flush attbuffers address: %p", tupbuffer->attbuffers);
+	elog(LOG, "zsbt_tuplebuffer_flush natts: %d", tupbuffer->natts);
 
 	for (int attno = 0 ; attno < tupbuffer->natts; attno++)
 	{
@@ -452,6 +453,7 @@ zsbt_tuplebuffer_flush(Relation rel)
 
 	tuplebuffer_flush_internal(rel, tupbuffer);
 
+	elog(LOG, "zsbt_tuplebuffer_flush deleting relid: %u from the hash table", RelationGetRelid(rel));
 	tuplebuffers_delete(tuplebuffers, RelationGetRelid(rel));
 
 
@@ -465,7 +467,11 @@ zsbt_tuplebuffer_flush(Relation rel)
 	}
 	pfree(tupbuffer->attbuffers);
 
-	tupbuffer->natts=0;
+	elog(LOG, "zsbt_tuplebuffer_flush after pfree natts: %d", tupbuffer->natts);
+	elog(LOG, "zsbt_tuplebuffer_flush after pfree tupbuffer address: %p", tupbuffer);
+	elog(LOG, "zsbt_tuplebuffer_flush after pfree setting natts = 0 and relid = 0, rel is %s, relid is %u", rel->rd_rel->relname.data, RelationGetRelid(rel));
+	tupbuffer->natts = 0;
+	tupbuffer->relid = InvalidOid;
 	//memset(tupbuffer, 0, sizeof(tuplebuffer));
 }
 
@@ -480,9 +486,11 @@ zsbt_tuplebuffers_flush(void)
 	{
 		Relation	rel;
 
+		Assert(tupbuffer->relid != InvalidOid);
 		rel = table_open(tupbuffer->relid, NoLock);
 
 		tuplebuffer_flush_internal(rel, tupbuffer);
+		tuplebuffers_delete(tuplebuffers, RelationGetRelid(rel));
 
 		table_close(rel, NoLock);
 	}
