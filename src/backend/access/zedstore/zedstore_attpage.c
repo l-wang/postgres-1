@@ -57,6 +57,7 @@ static void wal_log_attstream_change(Relation rel, Buffer buf, ZSAttStream *atts
 
 static void zsbt_attr_repack_init(zsbt_attr_repack_context *cxt, AttrNumber attno, Buffer oldbuf, bool append);
 static void zsbt_attr_repack_newpage(zsbt_attr_repack_context *cxt, zstid nexttid);
+static void zsbt_attr_repack_newpages_and pack_attstream(zsbt_attr_repack_context *cxt, attstream_buffer *attbuf);
 static void zsbt_attr_pack_attstream(Form_pg_attribute attr, attstream_buffer *buf, Page page);
 static void zsbt_attr_repack_writeback_pages(zsbt_attr_repack_context *cxt,
 											 Relation rel, AttrNumber attno,
@@ -414,7 +415,8 @@ get_page_upperstream(Page page)
  * 'attbuf' contains the new attribute data that is to be added to the page.
  *
  * This function writes as much data as is convenient; typically, as much
- * as fits on a single page, after compression. Some data is always written.
+ * as fits on a single attstream_buffer that will be stored in multiple pages, after compression.
+ * Some data is always written.
  * If you want to flush all data to disk, call zsbt_attr_add() repeatedly,
  * until 'attbuf' is empty.
  *
@@ -430,8 +432,8 @@ zsbt_attr_add(Relation rel, AttrNumber attno, attstream_buffer *attbuf)
 	Form_pg_attribute attr = &rel->rd_att->attrs[attno - 1];
 	Buffer		origbuf;
 	Page		origpage;
-	ZSAttStream *lowerstream;
-	ZSAttStream *upperstream;
+	//ZSAttStream *lowerstream;
+	ZSFirstAttStream *upperstream;
 	int			lowerstreamsz;
 	uint16		orig_pd_lower;
 	uint16		new_pd_lower;
@@ -446,90 +448,11 @@ zsbt_attr_add(Relation rel, AttrNumber attno, attstream_buffer *attbuf)
 	origbuf = zsbt_descend(rel, attno, attbuf->firsttid, 0, false);
 	origpage = BufferGetPage(origbuf);
 
-	lowerstream = get_page_lowerstream(origpage);
+	//lowerstream = get_page_lowerstream(origpage);
 	upperstream = get_page_upperstream(origpage);
 
 	/* Is there space to add the new attstream as it is? */
 	orig_pd_lower = ((PageHeader) origpage)->pd_lower;
-
-	if (lowerstream == NULL)
-	{
-		/*
-		 * No existing uncompressed data on page, see if the new data fits as is.
-		 */
-		Assert(orig_pd_lower == SizeOfPageHeaderData);
-
-		if (SizeOfZSAttStreamHeader + (attbuf->len - attbuf->cursor) <= PageGetExactFreeSpace(origpage))
-		{
-			ZSAttStream newhdr;
-
-			newhdr.t_size = SizeOfZSAttStreamHeader + (attbuf->len - attbuf->cursor);
-			newhdr.t_flags = 0;
-			newhdr.t_decompressed_size = 0;
-			newhdr.t_decompressed_bufsize = 0;
-			newhdr.t_lasttid = attbuf->lasttid;
-
-			new_pd_lower = SizeOfPageHeaderData + newhdr.t_size;
-
-			START_CRIT_SECTION();
-
-			memcpy(origpage + SizeOfPageHeaderData, &newhdr, SizeOfZSAttStreamHeader);
-			memcpy(origpage + SizeOfPageHeaderData + SizeOfZSAttStreamHeader,
-				   attbuf->data + attbuf->cursor, attbuf->len - attbuf->cursor);
-			((PageHeader) origpage)->pd_lower = new_pd_lower;
-
-			MarkBufferDirty(origbuf);
-
-			if (RelationNeedsWAL(rel))
-				wal_log_attstream_change(rel, origbuf,
-										 (ZSAttStream *) (origpage + SizeOfPageHeaderData), false,
-										 orig_pd_lower, new_pd_lower);
-
-			END_CRIT_SECTION();
-
-			UnlockReleaseBuffer(origbuf);
-			attbuf->cursor = attbuf->len;
-			return;
-		}
-	}
-	else
-	{
-		/*
-		 * Try to append the new data to the old data
-		 */
-		START_CRIT_SECTION();
-
-		if (append_attstream_inplace(attr, lowerstream,
-									 PageGetExactFreeSpace(origpage),
-									 attbuf))
-		{
-			new_pd_lower = SizeOfPageHeaderData + lowerstream->t_size;
-
-			/* fast path succeeded */
-			MarkBufferDirty(origbuf);
-
-			/*
-			 * NOTE: in theory, if append_attstream_inplace() was smarter, it might
-			 * modify the existing data. The new combined stream might even be smaller
-			 * than the old stream, if the last codewords are packed more tighthly.
-			 * But at the moment, append_attstreams_inplace() doesn't do anything
-			 * that smart. So we assume that the existing data didn't change, and we
-			 * only need to WAL log the new data at the end of the stream.
-			 */
-			((PageHeader) origpage)->pd_lower = new_pd_lower;
-
-			if (RelationNeedsWAL(rel))
-				wal_log_attstream_change(rel, origbuf, lowerstream, false,
-										 orig_pd_lower, new_pd_lower);
-
-			END_CRIT_SECTION();
-
-			UnlockReleaseBuffer(origbuf);
-			return;
-		}
-
-		END_CRIT_SECTION();
-	}
 
 	/*
 	 * If the orig page contains already-compressed data, and it is almost full,
@@ -538,9 +461,8 @@ zsbt_attr_add(Relation rel, AttrNumber attno, attstream_buffer *attbuf)
 	 * we put the threshold at 2.5%.
 	 */
 	firstnewtid = attbuf->firsttid;
-	lowerstreamsz = lowerstream ? lowerstream->t_size : 0;
-	if (PageGetExactFreeSpace(origpage) + lowerstreamsz < (int) (BLCKSZ * 0.025) &&
-		(lowerstream == NULL || firstnewtid > lowerstream->t_lasttid) &&
+	//lowerstreamsz = lowerstream ? lowerstream->t_size : 0;
+	if (PageGetExactFreeSpace(origpage) < (int) (BLCKSZ * 0.025) &&
 		upperstream &&  firstnewtid > upperstream->t_lasttid)
 	{
 		/*
@@ -548,7 +470,7 @@ zsbt_attr_add(Relation rel, AttrNumber attno, attstream_buffer *attbuf)
 		 * for the new data.
 		 */
 		zsbt_attr_repack_init(&cxt, attno, origbuf, true);
-		zsbt_attr_repack_newpage(&cxt, attbuf->firsttid);
+		zsbt_attr_repack_newpages(&cxt, attbuf);
 
 		/* write out the new data (or part of it) */
 		zsbt_attr_pack_attstream(attr, attbuf, cxt.currpage);
@@ -708,6 +630,127 @@ zsbt_attr_repack_newpage(zsbt_attr_repack_context *cxt, zstid nexttid)
 	newopaque->zs_page_id = ZS_BTREE_PAGE_ID;
 }
 
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+
+/*
+ * Number of postgres pages needed to fit data block of the specified size.
+ */
+static inline uint8
+zs_pages_needed(Size size)
+{
+    int     pages = 1;
+
+    Assert(size > 0);
+
+    size -= MIN(BLCKSZ - sizeof(ZSFirstAttStream), size);
+
+    while (size > 0)
+    {
+        size -= MIN(BLCKSZ - sizeof(ZSAttStream), size);
+        pages++;
+    }
+
+    return pages;
+};
+
+static void
+zsbt_attr_repack_newpages_and_pack_attstream(zsbt_attr_repack_context *cxt, attstream_buffer *attbuf)
+{
+	Page		newpage;
+	Page        zombiepage;
+	ZSBtreePageOpaque *newopaque;
+	zs_split_stack *stack;
+	ZSBtreePageOpaque *oldopaque = ZSBtreePageGetOpaque(cxt->currpage);
+	zstid       nexttid = attbuf->firsttid;
+	Size		freespc;
+	int			orig_bytes;
+	char	   *pstart;
+	char	   *pend;
+	int			srcSize;
+	int			compressed_size;
+	char		compressbuf[ZS_BLCKSZ];
+	int         npages;
+
+	/* set the last tid on previous page */
+	oldopaque->zs_hikey = nexttid;
+
+	zombiepage = (Page) palloc(BLCKSZ);
+	PageInit(zombiepage, BLCKSZ, sizeof(ZSBtreePageOpaque));
+
+	freespc = PageGetExactFreeSpace(zombiepage);
+
+	pstart = &attbuf->data[attbuf->cursor];
+	pend = &attbuf->data[attbuf->len];
+	orig_bytes = pend - pstart;
+
+	freespc -= SizeOfZSFirstAttStreamHeader;
+
+	/*
+	 * Try compressing.
+	 *
+	 * Note: we try compressing, even if the data fits uncompressed. That might seem
+	 * like a waste of time, but compression is very cheap, and this leaves more free
+	 * space on the page for new additions.
+	 */
+	srcSize = orig_bytes;
+	compressed_size = zs_compress_destSize(pstart, compressbuf, &srcSize, freespc);
+
+	if (compressed_size > 0)
+	{
+
+		/* split data into regular pages */
+		npages = zs_pages_needed(compressed_size);
+
+		/* store compressed, in upper stream */
+		int			bytes_compressed = srcSize;
+
+		/*
+		 * How many complete chunks did we compress?
+		 */
+		if (bytes_compressed == orig_bytes)
+		{
+			complete_chunks_len = orig_bytes;
+			lasttid = attbuf->lasttid;
+		}
+		else
+			complete_chunks_len = find_attstream_chop_pos(attr, pstart, bytes_compressed, &lasttid);
+
+		if (complete_chunks_len == 0)
+			elog(ERROR, "could not fit any chunks on page");
+
+		dst = (char *) page + ((PageHeader) page)->pd_special - (SizeOfZSAttStreamHeader + compressed_size);
+		hdr = (ZSAttStream *) dst;
+		hdr->t_size = SizeOfZSAttStreamHeader + compressed_size;
+		hdr->t_flags = ATTSTREAM_COMPRESSED;
+		hdr->t_decompressed_size = complete_chunks_len;
+		hdr->t_decompressed_bufsize = bytes_compressed;
+		hdr->t_lasttid = lasttid;
+
+		dst = hdr->t_payload;
+		memcpy(dst, compressbuf, compressed_size);
+		((PageHeader) page)->pd_upper -= hdr->t_size;
+	}
+
+	newpage = (Page) palloc(BLCKSZ);
+	PageInit(newpage, BLCKSZ, sizeof(ZSBtreePageOpaque));
+
+	stack = zs_new_split_stack_entry(InvalidBuffer, /* will be assigned later */
+									 newpage);
+	cxt->stack_tail->next = stack;
+	cxt->stack_tail = stack;
+
+	cxt->currpage = newpage;
+
+	newopaque = ZSBtreePageGetOpaque(newpage);
+	newopaque->zs_attno = cxt->attno;
+	newopaque->zs_next = InvalidBlockNumber; /* filled in later */
+	newopaque->zs_lokey = nexttid;
+	newopaque->zs_hikey = cxt->hikey;		/* overwritten later, if this is not last page */
+	newopaque->zs_level = 0;
+	newopaque->zs_flags = 0;
+	newopaque->zs_page_id = ZS_BTREE_PAGE_ID;
+}
+
 /*
  * Compress and write as much of the data from 'attbuf' onto 'page' as fits.
  * 'attbuf' is updated in place, so that on exit, it contains the remaining chunks
@@ -727,7 +770,8 @@ zsbt_attr_pack_attstream(Form_pg_attribute attr, attstream_buffer *attbuf,
 	int			srcSize;
 	int			compressed_size;
 	ZSAttStream *hdr;
-	char		compressbuf[BLCKSZ];
+	char		compressbuf[ZS_BLCKSZ];
+	int         npages;
 
 	/* this should only be called on an empty page */
 	Assert(((PageHeader) page)->pd_lower == SizeOfPageHeaderData);
@@ -737,7 +781,7 @@ zsbt_attr_pack_attstream(Form_pg_attribute attr, attstream_buffer *attbuf,
 	pend = &attbuf->data[attbuf->len];
 	orig_bytes = pend - pstart;
 
-	freespc -= SizeOfZSAttStreamHeader;
+	freespc -= SizeOfZSFirstAttStreamHeader;
 
 	/*
 	 * Try compressing.
@@ -750,6 +794,10 @@ zsbt_attr_pack_attstream(Form_pg_attribute attr, attstream_buffer *attbuf,
 	compressed_size = zs_compress_destSize(pstart, compressbuf, &srcSize, freespc);
 	if (compressed_size > 0)
 	{
+
+		/* split data into regular pages */
+		npages = zs_pages_needed(compressed_size);
+
 		/* store compressed, in upper stream */
 		int			bytes_compressed = srcSize;
 

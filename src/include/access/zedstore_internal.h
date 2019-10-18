@@ -28,6 +28,8 @@ struct zs_pending_undo_op;
 /*
  * attstream_buffer is an in-memory representation of an attribute stream. It is used
  * by the operations that construct and manipulate attribute streams.
+ *
+ * of size 1mb
  */
 typedef struct
 {
@@ -262,14 +264,26 @@ typedef struct
 {
 	uint32		t_size;			/* physical size of the stream. */
 	uint32		t_flags;
+	//uint32		t_decompressed_size;	/* payload size, excludes waste */
+	//uint32		t_decompressed_bufsize;	/* payload size, includes waste */
+	//zstid		t_lasttid;		/* last TID stored in this stream */
+
+	char		t_payload[FLEXIBLE_ARRAY_MEMBER];
+} ZSAttStream;
+
+typedef struct
+{
+	uint32		t_size;			/* physical size of the stream. */
+	uint32		t_flags;
 	uint32		t_decompressed_size;	/* payload size, excludes waste */
 	uint32		t_decompressed_bufsize;	/* payload size, includes waste */
 	zstid		t_lasttid;		/* last TID stored in this stream */
 
 	char		t_payload[FLEXIBLE_ARRAY_MEMBER];
-} ZSAttStream;
+} ZSFirstAttStream;
 
 #define SizeOfZSAttStreamHeader	offsetof(ZSAttStream, t_payload)
+#define SizeOfZSFirstAttStreamHeader	offsetof(ZSFirstAttStream, t_payload)
 
 #define ATTSTREAM_COMPRESSED	1
 
@@ -913,7 +927,7 @@ extern void create_attstream(attstream_buffer *buffer, bool attbyval, int16 attl
 							 int nelems, zstid *tids, Datum *datums, bool *isnulls);
 extern void init_attstream_buffer(attstream_buffer *buf, bool attbyval, int16 attlen);
 extern void init_attstream_buffer_from_stream(attstream_buffer *buf, bool attbyval, int16 attlen,
-											  ZSAttStream *attstream, MemoryContext memcontext);
+											  ZSFirstAttStream *attstream, MemoryContext memcontext);
 extern int append_attstream(attstream_buffer *buffer, bool all, int nelems,
 							zstid *tids, Datum *datums, bool *isnulls);
 extern void vacuum_attstream(Relation rel, AttrNumber attno, attstream_buffer *buffer,

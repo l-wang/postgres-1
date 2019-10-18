@@ -516,14 +516,17 @@ find_attstream_chop_pos(Form_pg_attribute att, char *chunks, int len, zstid *las
 
 void
 init_attstream_buffer_from_stream(attstream_buffer *buf, bool attbyval, int16 attlen,
-								  ZSAttStream *attstream, MemoryContext memcontext)
+								  ZSFirstAttStream *attstream, MemoryContext memcontext)
 {
 	int			buf_size;
 
 	if ((attstream->t_flags & ATTSTREAM_COMPRESSED) != 0)
 		buf_size = attstream->t_decompressed_bufsize;
 	else
+	{
+		elog(ERROR, "init_attstream_buffer_from_stream - should not be here");
 		buf_size = attstream->t_size - SizeOfZSAttStreamHeader;
+	}
 
 	buf->data = MemoryContextAlloc(memcontext, buf_size);
 	buf->len = 0;
