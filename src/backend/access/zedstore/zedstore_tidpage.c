@@ -376,6 +376,33 @@ zsbt_tid_scan_next_array(ZSTidTreeScan *scan, zstid nexttid, ScanDirection direc
 }
 
 /*
+ * Get the first tid in the tree.
+ */
+zstid
+zsbt_get_first_tid(Relation rel)
+{
+	zstid		leftmostkey;
+	zstid		tid;
+	Buffer		buf;
+	Page		page;
+	ZSBtreePageOpaque *opaque;
+
+	/* Find the leftmost leaf */
+	leftmostkey = MinZSTid;
+	buf = zsbt_descend(rel, ZS_META_ATTRIBUTE_NUM, leftmostkey, 0, true);
+	if (!BufferIsValid(buf))
+	{
+		return InvalidZSTid;
+	}
+	page = BufferGetPage(buf);
+	opaque = ZSBtreePageGetOpaque(page);
+	tid = opaque->zs_lokey;
+	UnlockReleaseBuffer(buf);
+
+	return tid;
+}
+
+/*
  * Get the last tid (plus one) in the tree.
  */
 zstid
