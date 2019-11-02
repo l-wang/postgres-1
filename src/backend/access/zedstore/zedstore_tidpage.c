@@ -392,10 +392,29 @@ zsbt_get_first_tid(Relation rel)
 	buf = zsbt_descend(rel, ZS_META_ATTRIBUTE_NUM, leftmostkey, 0, true);
 	if (!BufferIsValid(buf))
 	{
-		return InvalidZSTid;
+		return MaxPlusOneZSTid;
 	}
 	page = BufferGetPage(buf);
 	opaque = ZSBtreePageGetOpaque(page);
+
+	/* Move on to the next page if the current page has no item */
+	while (PageGetMaxOffsetNumber(page) < FirstOffsetNumber)
+	{
+		BlockNumber next = opaque->zs_next;
+
+		if (next == InvalidBlockNumber)
+		{
+			UnlockReleaseBuffer(buf);
+			return MaxPlusOneZSTid;
+		}
+		UnlockReleaseBuffer(buf);
+
+		buf = ReadBuffer(rel, next);
+		LockBuffer(buf, BUFFER_LOCK_SHARE);
+		page = BufferGetPage(buf);
+		opaque = ZSBtreePageGetOpaque(page);
+	}
+
 	tid = opaque->zs_lokey;
 	UnlockReleaseBuffer(buf);
 
