@@ -406,42 +406,67 @@ append_attstream(attstream_buffer *buf, bool all, int nelems,
 	return nelems - elems_remain;
 }
 
+/*
+ * Split the attstream_buffer supplied in oldattbuf at splittid. The oldattbuf
+ * and the newattbuf will represent the left and right attstream_buffers
+ * resultant from the split respectively.
+ */
+
 void
 chop_attstream_at_splittid(attstream_buffer *oldattbuf, attstream_buffer *newattbuf, zstid splittid)
 {
 	zstid lasttid_prev_chunk;
-	zstid lasttid_split_chunk;
+	zstid lasttid;
+
 	int split_chunk_pos;
 	int split_chunk_len;
-	int right_chunk_len = 0;
-	int split_chunk_num_elems = 0;
-	int left_chunk_num_elems = 0;
+	char *split_chunk;
+	int  split_chunk_num_elems = 0;
+
+	int  left_chunk_num_elems = 0;
+	zstid left_chunk_tids[60];
+	Datum left_chunk_datums[60];
+	bool  left_chunk_isnulls[60];
+
 	int right_chunk_num_elems = 0;
-	int right_stream_len_to_append;
+	zstid right_chunk_tids[60];
+	Datum right_chunk_datums[60];
+	bool right_chunk_isnulls[60];
+
+	char *right_stream_second_chunk;
+	int  right_stream_remaining_length;
+
 	MemoryContext attstream_memory_context = GetMemoryChunkContext(oldattbuf->data);
 	MemoryContext oldcontext;
 
-
-#define ZS_ARRAY_SIZE 60
-	zstid left_chunk_tids[ZS_ARRAY_SIZE];
-	Datum left_chunk_datums[ZS_ARRAY_SIZE];
-	bool left_chunk_isnulls[ZS_ARRAY_SIZE];
-
-	zstid right_chunk_tids[ZS_ARRAY_SIZE];
-	Datum right_chunk_datums[ZS_ARRAY_SIZE];
-	bool right_chunk_isnulls[ZS_ARRAY_SIZE];
-
 	Assert(oldattbuf->lasttid > splittid);
 
-	split_chunk_pos = find_attstream_chop_pos_with_tid(oldattbuf, splittid, &lasttid_prev_chunk);
-	lasttid_split_chunk = lasttid_prev_chunk;
-	split_chunk_len = decode_chunk(oldattbuf->attbyval, oldattbuf->attlen, &lasttid_split_chunk,
-							   oldattbuf->data + oldattbuf->cursor + split_chunk_pos,
-							   &split_chunk_num_elems,
-							   left_chunk_tids,
-							   left_chunk_datums,
-							   left_chunk_isnulls);
+	/*
+	 * First, we find the beginning offset of the chunk that contains the
+	 * splittid: the split_chunk and the lasttid of the chunk preceding the
+	 * split_chunk.
+	 */
 
+	split_chunk_pos =
+		find_chunk_containing_tid(oldattbuf, splittid, &lasttid_prev_chunk);
+	split_chunk     = oldattbuf->data + oldattbuf->cursor + split_chunk_pos;
+	lasttid         = lasttid_prev_chunk;
+
+	/*
+	 * Then we decode the split_chunk so that we can extract the items that will
+	 * belong to the left and right attstream_buffers respectively (called
+	 * left_chunk and right_chunk). The left attstream_buffer will end with
+	 * left_chunk and the right attstream_buffer will begin with right_chunk.
+	 */
+
+	split_chunk_len = decode_chunk(oldattbuf->attbyval,
+								   oldattbuf->attlen,
+								   &lasttid,
+								   split_chunk,
+								   &split_chunk_num_elems,
+								   left_chunk_tids,
+								   left_chunk_datums,
+								   left_chunk_isnulls);
 	left_chunk_num_elems = split_chunk_num_elems;
 	for (int i = 0; i < split_chunk_num_elems; i++)
 	{
@@ -457,63 +482,58 @@ chop_attstream_at_splittid(attstream_buffer *oldattbuf, attstream_buffer *newatt
 		}
 	}
 	right_chunk_num_elems = split_chunk_num_elems - left_chunk_num_elems;
-
 	oldcontext  = MemoryContextSwitchTo(attstream_memory_context);
-
-	if (right_chunk_num_elems == 0)
+	if (right_chunk_num_elems > 0)
+		right_stream_second_chunk = split_chunk + split_chunk_len;
+	else
 	{
+		Assert(right_chunk_num_elems == 0);
 		/*
-		 * Use the chunk after the split chunk to populate the right chunk
+		 * This indicates that the splittid lies on a chunk boundary. We need to
+		 * treat the chunk starting at that boundary to be the right chunk. In
+		 * order to do so, we need to decode that chunk.
 		 */
-		right_chunk_len = decode_chunk(oldattbuf->attbyval, oldattbuf->attlen, &lasttid_split_chunk,
-									   oldattbuf->data + oldattbuf->cursor + split_chunk_pos + split_chunk_len,
-									   &right_chunk_num_elems,
-									   right_chunk_tids,
-									   right_chunk_datums,
-									   right_chunk_isnulls);
+		right_stream_second_chunk = split_chunk + split_chunk_len +
+			decode_chunk(oldattbuf->attbyval,
+						 oldattbuf->attlen,
+						 &lasttid,
+						 split_chunk + split_chunk_len,
+						 &right_chunk_num_elems,
+						 right_chunk_tids,
+						 right_chunk_datums,
+						 right_chunk_isnulls);
 	}
 
-	/* Create the right stream with the right chunk */
+	/*
+	 * Initialize the right stream to begin with right_chunk. Then, append all
+	 * of the chunks following the right_chunk. This will complete the right
+	 * attstream_buffer.
+	 */
+
 	create_attstream(newattbuf, oldattbuf->attbyval, oldattbuf->attlen,
 					 right_chunk_num_elems,
 					 right_chunk_tids,
 					 right_chunk_datums,
 					 right_chunk_isnulls);
 	MemoryContextSwitchTo(oldcontext);
-
-	/* memcpy to append the rest to the right stream */
-	right_stream_len_to_append = oldattbuf->len - (oldattbuf->cursor + split_chunk_pos + split_chunk_len + right_chunk_len);
-	enlarge_attstream_buffer(newattbuf, right_stream_len_to_append);
-	memcpy(newattbuf->data + newattbuf->len,
-		oldattbuf->data + oldattbuf->cursor + split_chunk_pos + split_chunk_len + right_chunk_len,
-		   right_stream_len_to_append);
-	newattbuf->len += right_stream_len_to_append;
+	right_stream_remaining_length = (oldattbuf->data + oldattbuf->len) - right_stream_second_chunk;
+	enlarge_attstream_buffer(newattbuf, right_stream_remaining_length);
+	memcpy(newattbuf->data + newattbuf->len, right_stream_second_chunk,
+		   right_stream_remaining_length);
+	newattbuf->len += right_stream_remaining_length;
 	newattbuf->lasttid = oldattbuf->lasttid;
 
-	/* chop old stream from beginning of the split chunk -> partial left stream */
+	/*
+	 * Truncate the left attstream_buffer beyond the start of the split_chunk.
+	 * Then, append the left_chunk to the end of the left attstream_buffer.
+	 * This will complete the left attstream_buffer.
+	 */
+
 	oldattbuf->len = oldattbuf->cursor + split_chunk_pos;
 	oldattbuf->lasttid = lasttid_prev_chunk;
-
-	/* append to the left stream with the left chunk */
 	if (left_chunk_num_elems > 0)
-		append_attstream(oldattbuf, true, left_chunk_num_elems, left_chunk_tids, left_chunk_datums, left_chunk_isnulls);
-
-	elog(DEBUG2, "chop_attstream_at_splittid - split_chunk_pos: %d, lasttid_prev_chunk: %lu, left_chunk_num_elems: %d, "
-		   "right_chunk_num_elems: %d, split_chunk_num_elems %d, oldattbuf->firsttid: %lu, "
-	 "oldattbuf->lasttid: %lu, newattbuf->firsttid: %lu, newattbuf->lasttid: %lu, splittid: %lu,"
-  "right_chunk_len: %d, split_chunk_len: %d",
-		   split_chunk_pos,
-		   lasttid_prev_chunk,
-		   left_chunk_num_elems,
-		   right_chunk_num_elems,
-		   split_chunk_num_elems,
-		   oldattbuf->firsttid,
-		   oldattbuf->lasttid,
-		   newattbuf->firsttid,
-		   newattbuf->lasttid,
-		   splittid,
-		   right_chunk_len,
-		   split_chunk_len);
+		append_attstream(oldattbuf, true, left_chunk_num_elems,
+						 left_chunk_tids, left_chunk_datums, left_chunk_isnulls);
 
 #ifdef USE_ASSERT_CHECKING
 	verify_attstream(oldattbuf);
@@ -603,33 +623,34 @@ chop_attstream(attstream_buffer *buf, int pos, zstid lasttid)
 }
 
 /*
- * Find the beginning offset of last chunk that covers splittid.
- *
+ * Find the beginning offset of chunk containing 'tid'.
+ * Also populate the lasttid of the chunk preceding the one we found in 'lasttid'.
  * Returns -1 if there are no full chunks. (FIXME: no it doesn't currently)
  */
 int
-find_attstream_chop_pos_with_tid(attstream_buffer *attbuf, zstid splittid, zstid *lasttid)
+find_chunk_containing_tid(attstream_buffer *attbuf, zstid tid, zstid *lasttid)
 {
 	zstid			prev_lasttid;
-	char			*prev_chunk_p;
-	char			*pstart;
-	char			*p;
+	char			*prev_chunk;
+	char			*chunk;
 
-	pstart = p = prev_chunk_p = &attbuf->data[attbuf->cursor];
+	chunk = prev_chunk = &attbuf->data[attbuf->cursor];
 	prev_lasttid = *lasttid = 0;
 
-	while (*lasttid < splittid)
+	while (*lasttid < tid)
 	{
 		prev_lasttid = *lasttid;
-		prev_chunk_p = p;
+		prev_chunk   = chunk;
 
-		p += skip_chunk(attbuf->attlen, p, lasttid);
+		chunk += skip_chunk(attbuf->attlen, chunk, lasttid);
 	}
 
 	*lasttid = prev_lasttid;
 
-	/* 'prev_chunk_p' points to the beginning of the chunk that covers splittid */
-	return prev_chunk_p - (char *) pstart;
+	/*
+	 * prev_chunk now points to the beginning of the chunk that contains tid
+	 */
+	return prev_chunk - &attbuf->data[attbuf->cursor];
 }
 
 /*
