@@ -123,7 +123,7 @@ zspage_is_unused(Buffer buf)
  * That's unfortunate, but hopefully won't happen too often.
  */
 Buffer
-zspage_getnewbuf(Relation rel)
+zspage_getnewbuf(Relation rel, AttrNumber attrNumber)
 {
 	Buffer		buf;
 	BlockNumber blk;
@@ -138,7 +138,11 @@ zspage_getnewbuf(Relation rel)
 	metaopaque = (ZSMetaPageOpaque *) PageGetSpecialPointer(metapage);
 
 	/* Get a block from the FPM. */
-	blk = metaopaque->zs_fpm_head;
+	if (attrNumber != -1)
+		blk = metaopaque->zs_attr_fpm_heads[attrNumber];
+	else
+		blk = metaopaque->zs_fpm_head;
+
 	if (blk == ZS_META_BLK)
 	{
 		/* metapage, not expected */
@@ -163,7 +167,10 @@ zspage_getnewbuf(Relation rel)
 		opaque = (ZSFreePageOpaque *) PageGetSpecialPointer(page);
 		next_free_blkno = opaque->zs_next;
 
-		metaopaque->zs_fpm_head = next_free_blkno;
+		if (attrNumber != -1)
+			metaopaque->zs_attr_fpm_heads[attrNumber] = next_free_blkno;
+		else
+			metaopaque->zs_fpm_head = next_free_blkno;
 
 		if (RelationNeedsWAL(rel))
 		{
@@ -192,9 +199,19 @@ zspage_getnewbuf(Relation rel)
 	else
 	{
 		/* No free pages. Have to extend the relation. */
-		UnlockReleaseBuffer(metabuf);
 		buf = zspage_extendrel_newbuf(rel);
 		blk = BufferGetBlockNumber(buf);
+
+		Buffer extrabufs[3];
+		for (int i = 0; i < 3; i++) {
+			extrabufs[i] = zspage_extendrel_newbuf(rel);
+		}
+
+		for (int i = 2; i >=0; i--) {
+			zspage_delete_page(rel, extrabufs[i], metabuf, attrNumber);
+			UnlockReleaseBuffer(extrabufs[i]);
+		}
+		UnlockReleaseBuffer(metabuf);
 	}
 
 	return buf;
@@ -280,7 +297,7 @@ zspage_extendrel_newbuf(Relation rel)
  * you can use zspage_mark_page_deleted() to avoid it.
  */
 void
-zspage_delete_page(Relation rel, Buffer buf, Buffer metabuf)
+zspage_delete_page(Relation rel, Buffer buf, Buffer metabuf, AttrNumber attrNumber)
 {
 	bool		release_metabuf;
 	BlockNumber blk = BufferGetBlockNumber(buf);
@@ -302,9 +319,23 @@ zspage_delete_page(Relation rel, Buffer buf, Buffer metabuf)
 	metaopaque = (ZSMetaPageOpaque *) PageGetSpecialPointer(metapage);
 
 	page = BufferGetPage(buf);
-	next_free_blkno = metaopaque->zs_fpm_head;
-	zspage_mark_page_deleted(page, next_free_blkno);
-	metaopaque->zs_fpm_head = blk;
+
+	if (attrNumber != -1)
+	{
+		/*
+		 * Add the page to the attribute specific free page map.
+		 */
+		next_free_blkno = metaopaque->zs_attr_fpm_heads[attrNumber];
+		zspage_mark_page_deleted(page, next_free_blkno);
+		metaopaque->zs_attr_fpm_heads[attrNumber] = blk;
+	}
+	else
+	{
+		next_free_blkno = metaopaque->zs_fpm_head;
+		zspage_mark_page_deleted(page, next_free_blkno);
+		metaopaque->zs_fpm_head = blk;
+	}
+
 
 	MarkBufferDirty(metabuf);
 	MarkBufferDirty(buf);

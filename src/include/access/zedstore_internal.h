@@ -563,6 +563,7 @@ typedef struct ZSMetaPageOpaque
 	ZSUndoRecPtr zs_undo_oldestptr;
 
 	BlockNumber zs_fpm_head;		/* head of the Free Page Map list */
+	BlockNumber zs_attr_fpm_heads[100];
 
 	uint16		zs_flags;
 	uint16		zs_page_id;
@@ -956,7 +957,7 @@ extern zs_split_stack *zsbt_insert_downlinks(Relation rel, AttrNumber attno,
 extern void zsbt_attr_remove(Relation rel, AttrNumber attno, IntegerSet *tids);
 extern zs_split_stack *zsbt_unlink_page(Relation rel, AttrNumber attno, Buffer buf, int level);
 extern zs_split_stack *zs_new_split_stack_entry(Buffer buf, Page page);
-extern void zs_apply_split_changes(Relation rel, zs_split_stack *stack, struct zs_pending_undo_op *undo_op);
+extern void zs_apply_split_changes(Relation rel, zs_split_stack *stack, struct zs_pending_undo_op *undo_op, AttrNumber attrNumber);
 extern Buffer zsbt_descend(Relation rel, AttrNumber attno, zstid key, int level, bool readonly);
 extern Buffer zsbt_find_and_lock_leaf_containing_tid(Relation rel, AttrNumber attno,
 													 Buffer buf, zstid nexttid, int lockmode);
@@ -1046,9 +1047,9 @@ extern Datum zedstore_toast_flatten(Relation rel, AttrNumber attno, zstid tid, D
 extern void zedstore_toast_delete(Relation rel, Form_pg_attribute attr, zstid tid, BlockNumber blkno);
 
 /* prototypes for functions in zedstore_freepagemap.c */
-extern Buffer zspage_getnewbuf(Relation rel);
+extern Buffer zspage_getnewbuf(Relation rel, AttrNumber attrNumber);
 extern void zspage_mark_page_deleted(Page page, BlockNumber next_free_blk);
-extern void zspage_delete_page(Relation rel, Buffer buf, Buffer metabuf);
+extern void zspage_delete_page(Relation rel, Buffer buf, Buffer metabuf, AttrNumber attrNumber);
 
 typedef struct ZedstoreTupleTableSlot
 {

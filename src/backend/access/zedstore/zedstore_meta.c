@@ -179,6 +179,9 @@ zsmeta_initmetapage_internal(int natts)
 
 	opaque->zs_fpm_head = InvalidBlockNumber;
 
+	for (int i = 0; i < 100; i++)
+		opaque->zs_attr_fpm_heads[i] = InvalidBlockNumber;
+
 	metapg = (ZSMetaPage *) PageGetContents(page);
 
 	new_pd_lower = (char *) &metapg->tree_root_dir[natts] - (char *) page;
@@ -449,7 +452,7 @@ zsmeta_get_root_for_attribute(Relation rel, AttrNumber attno, bool readonly)
 			LockBuffer(metabuf, BUFFER_LOCK_UNLOCK);
 
 			/* TODO: release lock on metapage while we do I/O */
-			rootbuf = zspage_getnewbuf(rel);
+			rootbuf = zspage_getnewbuf(rel, attno);
 
 			LockBuffer(metabuf, BUFFER_LOCK_EXCLUSIVE);
 			metapg = (ZSMetaPage *) PageGetContents(page);
@@ -461,7 +464,7 @@ zsmeta_get_root_for_attribute(Relation rel, AttrNumber attno, bool readonly)
 				 * finding a free page. We won't need the page we allocated,
 				 * after all.
 				 */
-				zspage_delete_page(rel, rootbuf, metabuf);
+				zspage_delete_page(rel, rootbuf, metabuf, attno);
 			}
 			else
 			{
