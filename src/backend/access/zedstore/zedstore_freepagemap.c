@@ -205,9 +205,11 @@ zspage_getnewbuf(Relation rel, AttrNumber attrNumber)
 		Buffer extrabufs[3];
 		for (int i = 0; i < 3; i++) {
 			extrabufs[i] = zspage_extendrel_newbuf(rel);
+			LockBuffer(extrabufs[i], BUFFER_LOCK_UNLOCK);
 		}
 
 		for (int i = 2; i >=0; i--) {
+			LockBuffer(extrabufs[i], BUFFER_LOCK_EXCLUSIVE);
 			zspage_delete_page(rel, extrabufs[i], metabuf, attrNumber);
 			UnlockReleaseBuffer(extrabufs[i]);
 		}
