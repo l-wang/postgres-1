@@ -2388,23 +2388,23 @@ DELETE FROM v1 WHERE snoop(a) AND leakproof(a); -- should not delete everything,
 NOTICE:  snooped value: 6
 NOTICE:  snooped value: 7
 NOTICE:  snooped value: 9
-NOTICE:  snooped value: 10
-NOTICE:  snooped value: 9
-NOTICE:  snooped value: 6
-NOTICE:  snooped value: 7
-NOTICE:  snooped value: 9
 NOTICE:  snooped value: 9
 NOTICE:  snooped value: 10
 NOTICE:  snooped value: 6
 NOTICE:  snooped value: 7
 NOTICE:  snooped value: 9
-NOTICE:  snooped value: 9
 NOTICE:  snooped value: 10
+NOTICE:  snooped value: 9
 NOTICE:  snooped value: 6
 NOTICE:  snooped value: 7
 NOTICE:  snooped value: 9
+NOTICE:  snooped value: 10
+NOTICE:  snooped value: 9
+NOTICE:  snooped value: 6
+NOTICE:  snooped value: 7
 NOTICE:  snooped value: 9
 NOTICE:  snooped value: 10
+NOTICE:  snooped value: 9
 TABLE t1; -- verify all a<=5 are intact
  a | b |  c   
 ---+---+------

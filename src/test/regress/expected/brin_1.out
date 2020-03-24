@@ -475,7 +475,7 @@ SELECT brin_summarize_range('brin_summarize_idx', 2);
 SELECT brin_summarize_range('brin_summarize_idx', 4294967295);
  brin_summarize_range 
 ----------------------
-                    2
+                    5
 (1 row)
 
 -- invalid block number values
