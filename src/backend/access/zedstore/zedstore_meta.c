@@ -130,7 +130,10 @@ zsmeta_expand_metapage_for_new_attributes(Relation rel)
 
 		/* Initialize the new attribute roots to InvalidBlockNumber */
 		for (int i = metapg->nattributes; i < natts; i++)
+		{
 			metapg->tree_root_dir[i].root = InvalidBlockNumber;
+			metapg->tree_root_dir[i].fpm_head = InvalidBlockNumber;
+		}
 
 		metapg->nattributes = natts;
 		((PageHeader) page)->pd_lower = new_pd_lower;
@@ -179,9 +182,6 @@ zsmeta_initmetapage_internal(int natts)
 
 	opaque->zs_fpm_head = InvalidBlockNumber;
 
-	for (int i = 0; i < 100; i++)
-		opaque->zs_attr_fpm_heads[i] = InvalidBlockNumber;
-
 	metapg = (ZSMetaPage *) PageGetContents(page);
 
 	new_pd_lower = (char *) &metapg->tree_root_dir[natts] - (char *) page;
@@ -197,7 +197,10 @@ zsmeta_initmetapage_internal(int natts)
 
 	metapg->nattributes = natts;
 	for (int i = 0; i < natts; i++)
+	{
 		metapg->tree_root_dir[i].root = InvalidBlockNumber;
+		metapg->tree_root_dir[i].fpm_head = InvalidBlockNumber;
+	}
 
 	((PageHeader) page)->pd_lower = new_pd_lower;
 	return page;

@@ -525,6 +525,7 @@ zs_datumCopy(Datum value, bool typByVal, int typLen)
 typedef struct ZSRootDirItem
 {
 	BlockNumber root;
+	BlockNumber fpm_head;
 } ZSRootDirItem;
 
 typedef struct ZSMetaPage
@@ -563,8 +564,6 @@ typedef struct ZSMetaPageOpaque
 	ZSUndoRecPtr zs_undo_oldestptr;
 
 	BlockNumber zs_fpm_head;		/* head of the Free Page Map list */
-	BlockNumber zs_attr_fpm_heads[100];
-
 	uint16		zs_flags;
 	uint16		zs_page_id;
 } ZSMetaPageOpaque;

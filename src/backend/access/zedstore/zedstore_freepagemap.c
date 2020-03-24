@@ -129,17 +129,19 @@ zspage_getnewbuf(Relation rel, AttrNumber attrNumber)
 	BlockNumber blk;
 	Buffer		metabuf;
 	Page		metapage;
+	ZSMetaPage  *metapg;
 	ZSMetaPageOpaque *metaopaque;
 
 	metabuf = ReadBuffer(rel, ZS_META_BLK);
 	LockBuffer(metabuf, BUFFER_LOCK_EXCLUSIVE);
 
-	metapage = BufferGetPage(metabuf);
+	metapage   = BufferGetPage(metabuf);
 	metaopaque = (ZSMetaPageOpaque *) PageGetSpecialPointer(metapage);
+	metapg     = (ZSMetaPage *) PageGetContents(metapage);
 
 	/* Get a block from the FPM. */
 	if (attrNumber != -1)
-		blk = metaopaque->zs_attr_fpm_heads[attrNumber];
+		blk = metapg->tree_root_dir[attrNumber].fpm_head;
 	else
 		blk = metaopaque->zs_fpm_head;
 
@@ -168,7 +170,7 @@ zspage_getnewbuf(Relation rel, AttrNumber attrNumber)
 		next_free_blkno = opaque->zs_next;
 
 		if (attrNumber != -1)
-			metaopaque->zs_attr_fpm_heads[attrNumber] = next_free_blkno;
+			metapg->tree_root_dir[attrNumber].fpm_head = next_free_blkno;
 		else
 			metaopaque->zs_fpm_head = next_free_blkno;
 
@@ -304,6 +306,7 @@ zspage_delete_page(Relation rel, Buffer buf, Buffer metabuf, AttrNumber attrNumb
 	bool		release_metabuf;
 	BlockNumber blk = BufferGetBlockNumber(buf);
 	Page		metapage;
+	ZSMetaPage  *metapg;
 	ZSMetaPageOpaque *metaopaque;
 	Page		page;
 	BlockNumber next_free_blkno;
@@ -318,6 +321,7 @@ zspage_delete_page(Relation rel, Buffer buf, Buffer metabuf, AttrNumber attrNumb
 		release_metabuf = false;
 
 	metapage = BufferGetPage(metabuf);
+	metapg = (ZSMetaPage *) PageGetContents(metapage);
 	metaopaque = (ZSMetaPageOpaque *) PageGetSpecialPointer(metapage);
 
 	page = BufferGetPage(buf);
@@ -327,9 +331,9 @@ zspage_delete_page(Relation rel, Buffer buf, Buffer metabuf, AttrNumber attrNumb
 		/*
 		 * Add the page to the attribute specific free page map.
 		 */
-		next_free_blkno = metaopaque->zs_attr_fpm_heads[attrNumber];
+		next_free_blkno = metapg->tree_root_dir[attrNumber].fpm_head;
 		zspage_mark_page_deleted(page, next_free_blkno);
-		metaopaque->zs_attr_fpm_heads[attrNumber] = blk;
+		metapg->tree_root_dir[attrNumber].fpm_head = blk;
 	}
 	else
 	{
