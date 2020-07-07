@@ -2807,12 +2807,11 @@ partitions_are_ordered(PartitionBoundInfo boundinfo, int nparts)
  */
 void
 check_new_partition_bound(char *relname, Relation parent,
-						  PartitionBoundSpec *spec)
+						  PartitionBoundSpec *spec, ParseState *pstate)
 {
 	PartitionKey key = RelationGetPartitionKey(parent);
 	PartitionDesc partdesc = RelationGetPartitionDesc(parent);
 	PartitionBoundInfo boundinfo = partdesc->boundinfo;
-	ParseState *pstate = make_parsestate(NULL);
 	int			with = -1;
 	bool		overlap = false;
 
