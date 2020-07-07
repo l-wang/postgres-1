@@ -3813,7 +3813,7 @@ CREATE TABLE fail_part (LIKE part_1 INCLUDING CONSTRAINTS);
 ALTER TABLE list_parted ATTACH PARTITION fail_part FOR VALUES IN (1);
 ERROR:  partition "fail_part" would overlap partition "part_1"
 LINE 1: ...LE list_parted ATTACH PARTITION fail_part FOR VALUES IN (1);
-                                                                ^
+                                                                    ^
 DROP TABLE fail_part;
 -- check that an existing table can be attached as a default partition
 CREATE TABLE def_part (LIKE list_parted INCLUDING CONSTRAINTS);
